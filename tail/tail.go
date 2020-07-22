@@ -24,45 +24,45 @@ type SeekInfo struct {
 }
 
 type Tail struct {
-	Filename string
-	Lines chan *Line
-	Location *SeekInfo
-	file   *os.File
-	reader *bufio.Reader
-	fileLen int64
-	watcher *fsnotify.Watcher
+	filename string
+	Lines    chan *Line
+	location *SeekInfo
+	file     *os.File
+	reader   *bufio.Reader
+	fileLen  int64
+	watcher  *fsnotify.Watcher
 }
 
-func(t *Tail)ReadFile() {
-	fi, err := os.Stat(t.Filename)
+func(t *Tail) readFile() {
+	fi, err := os.Stat(t.filename)
 	if err != nil || fi.IsDir() {
 		return
 	}
 	t.fileLen = fi.Size()
-	f, err := os.OpenFile(t.Filename, os.O_RDONLY , 0666)
+	f, err := os.OpenFile(t.filename, os.O_RDONLY , 0666)
 	if err != nil {
 		log.Fatal(err)
 	}
 	t.file = f
 }
 
-func (t *Tail)InitReader() {
+func (t *Tail) initReader() {
 	t.reader = bufio.NewReader(t.file)
 }
 
-func (t *Tail)InitWatcher()  {
+func (t *Tail) initWatcher()  {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		log.Fatal("初始化文件watcher失败", err)
 	}
-	err = watcher.Add(t.Filename)
+	err = watcher.Add(t.filename)
 	if err != nil {
 		log.Fatal("notify 文件失败", err)
 	}
 	t.watcher = watcher
 }
 
-func (t *Tail)ReadLine()(string, error) {
+func (t *Tail) readLine()(string, error){
 	line, err := t.reader.ReadString('\n')
 	if err != nil {
 		return line, err
@@ -71,7 +71,14 @@ func (t *Tail)ReadLine()(string, error) {
 	return line, nil
 }
 
-func (t *Tail) Tell() (offset int64, err error) {
+func (t *Tail) transLine(line string) {
+	t.Lines <- &Line{
+		Text: line,
+		Time: time.Now(),
+		Err:  nil,
+	}
+}
+func (t *Tail) tell() (offset int64, err error) {
 	if t.file == nil {
 		return
 	}
@@ -88,42 +95,46 @@ func (t *Tail) Tell() (offset int64, err error) {
 	return
 }
 
-func SeekFile() {
-	tail := &Tail{
-		Filename: filename,
+func New(filename string) *Tail {
+	return &Tail{
+		filename: filename,
 		Lines:    make(chan *Line),
-		Location:&SeekInfo{
+		location:&SeekInfo{
 			Offset: int64(0),
 			Whence: 0,
 		},
 	}
-	tail.ReadFile()
-	tail.InitWatcher()
-	tail.InitReader()
+}
+
+func (t *Tail)StartTrack() {
+	t.readFile()
+	t.initWatcher()
+	t.initReader()
 	var offset int64
 	for {
-		offset, _ = tail.Tell()
-		line, err := tail.ReadLine()
+		offset, _ = t.tell()
+		line, err := t.readLine()
 		if err == nil {
-			fmt.Println(line)
+			t.transLine(line)
 		} else if err == io.EOF {
-			_, err = tail.file.Seek(offset, 0)
+			_, err = t.file.Seek(offset, 0)
 			if err != nil {
 				return
 			}
 			// 通过chanel 不然死循环一直去读取文件流 会爆炸
 			var modifyChan = make(chan bool)
+			// TODO: watcher 在某个节点需要close掉
 			go func(modifyChan chan bool) {
 				for {
 					select {
-					case event, ok := <-tail.watcher.Events:
+					case event, ok := <-t.watcher.Events:
 						if !ok {
 							return
 						}
 						if event.Op&fsnotify.Write == fsnotify.Write {
 							modifyChan <- true
 						}
-					case e, ok := <- tail.watcher.Errors:
+					case e, ok := <- t.watcher.Errors:
 						if !ok {
 							return
 						}

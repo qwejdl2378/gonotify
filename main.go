@@ -1,7 +1,17 @@
 package main
 
-import "github.com/qwejdl2378/gonotify/tail"
+import (
+	"fmt"
+	"github.com/qwejdl2378/gonotify/tail"
+)
 
 func main() {
-	tail.SeekFile()
+	t := tail.New("/workspace/tmp/openresty-config/logs/access.log")
+	go t.StartTrack()
+	for {
+		select {
+			case t := <- t.Lines:
+				fmt.Println(t.Text)
+		}
+	}
 }
